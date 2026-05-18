@@ -1,0 +1,4 @@
+DeadReckoning	KEYWORD1
+initCompass	KEYWORD2
+move	KEYWORD2
+getHeading	KEYWORD2
