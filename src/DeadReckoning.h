@@ -6,8 +6,8 @@
 #include "TwoWDController.h" 
 
 // HMC5883L I2C Address and Registers
-//#define HMC5883L_ADDRESS 0x1E
-#define HMC5883L_ADDRESS 0x0D
+#define HMC5883L_ADDRESS 0x1E
+//#define HMC5883L_ADDRESS 0x0D
 #define HMC5883L_REG_CONFIG_A 0x00
 #define HMC5883L_REG_CONFIG_B 0x01
 #define HMC5883L_REG_MODE 0x02
