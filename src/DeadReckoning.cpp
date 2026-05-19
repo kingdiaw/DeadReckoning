@@ -114,7 +114,7 @@ void DeadReckoning::move(float targetHeading, long targetTicks) {
         float rightSpeed = baseSpeed - correction;
 
         // Command the motors in m/s
-        _robot->setMotorSpeeds(leftSpeed, rightSpeed);
+        _robot->drive(leftSpeed, rightSpeed);
 
         // Update loop variables
         long averageTick = (_robot->getLeftPosition() + _robot->getRightPosition()) / 2.0;
