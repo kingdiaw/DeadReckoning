@@ -118,7 +118,7 @@ void DeadReckoning::move(float targetHeading, long targetTicks) {
 
         // Update loop variables
         long averageTick = (_robot->getLeftPosition + _robot->getRightPosition) / 2.0;
-        currentTicks = _robot->averageTick;
+        currentTicks = averageTick;
         
         // Small delay to prevent the loop from hard-locking the CPU
         delay(5); 
