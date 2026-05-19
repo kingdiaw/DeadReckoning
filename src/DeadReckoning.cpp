@@ -124,5 +124,5 @@ void DeadReckoning::move(float targetHeading, long targetTicks) {
     }
 
     // Target distance reached
-    _robot->stopMotors();
+    _robot->stop();
 }
