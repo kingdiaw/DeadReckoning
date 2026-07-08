@@ -1,129 +1,130 @@
 #include "DeadReckoning.h"
 
-DeadReckoning::DeadReckoning(TwoWDController* robot) {
+DeadReckoning::DeadReckoning(TwoWDController* robot, uint8_t compassAddress) {
     _robot = robot;
+    _compassAddress = compassAddress;
+    _isMoving = false;
+
+    _Kp = 0.003;
+    _Ki = 0.0;
+    _Kd = 0.0;
+    _baseSpeed = 0.15;
+
+    // Inisialisasi nilai awal penapis (filter)
+    _filteredX = 0.0;
+    _filteredY = 0.0;
+    _alpha = 0.2;       // Nilai alpha sesuai contoh Anda (0.0 - 1.0)
+    _lastHeading = 0.0;
 }
 
 void DeadReckoning::initCompass() {
-    Wire.begin(); // Start the I2C bus
+    if (!_compass.begin(_compassAddress, &Wire)) {
+        Serial.println("Gagal mengesan QMC5883! Semak pendawaian.");
+    } else {
+        // 1. Tukar kepada CONTINUOUS mode
+        _compass.setMode(QMC5883P_MODE_CONTINUOUS);
 
-    // 1. Configure Register A: 1 Sample, 15Hz
-    Wire.beginTransmission(HMC5883L_ADDRESS);
-    Wire.write(HMC5883L_REG_CONFIG_A);
-    Wire.write(0x10); 
-    Wire.endTransmission();
+        // 2. ODR tetapkan ke 50Hz (sesuai dengan sela masa 70ms Anda)
+        _compass.setODR(QMC5883P_ODR_50HZ); 
 
-    // 2. Configure Register B: Range 1.3 Ga
-    Wire.beginTransmission(HMC5883L_ADDRESS);
-    Wire.write(HMC5883L_REG_CONFIG_B);
-    Wire.write(0x20); 
-    Wire.endTransmission();
+        // 3. Set OSR ke 8 untuk maksimumkan oversampling (mengurangkan noise dalaman)
+        _compass.setOSR(QMC5883P_OSR_8);
 
-    // 3. Configure Mode: Continuous Measurement
-    Wire.beginTransmission(HMC5883L_ADDRESS);
-    Wire.write(HMC5883L_REG_MODE);
-    Wire.write(0x00); 
-    Wire.endTransmission();
+        // 4. Tetapkan DSR, Range, dan SetResetMode sesuai contoh baru
+        _compass.setDSR(QMC5883P_DSR_2);
+        _compass.setRange(QMC5883P_RANGE_8G);
+        _compass.setSetResetMode(QMC5883P_SETRESET_ON);
+        
+        Serial.println("QMC5883P Berjaya Dikonfigurasi dengan Filter!");
+    }
 }
 
 float DeadReckoning::getHeading() {
-    // Tell the compass we want to read starting from the first data register
-    Wire.beginTransmission(HMC5883L_ADDRESS);
-    Wire.write(HMC5883L_REG_DATA); 
-    Wire.endTransmission();
+    float x, y, z;
+    
+    if (_compass.getGaussField(&x, &y, &z)) {
+        
+        // --- MASUKKAN NILAI KALIBRASI ANDA DI SINI ---
+        float offsetX = 0.244; // Ganti dengan Offset X dari Serial Monitor
+        float offsetY = 0.143; // Ganti dengan Offset Y dari Serial Monitor
+        float scaleX  = 1.074; // Ganti dengan Scale X dari Serial Monitor
+        float scaleY  = 0.935; // Ganti dengan Scale Y dari Serial Monitor
 
-    // Request the 6 bytes of data (X, Z, Y MSB and LSB)
-    Wire.requestFrom(HMC5883L_ADDRESS, 6);
-
-    if (Wire.available() >= 6) {
-        // Read the registers. Note the order: X, Z, Y!
-        int16_t x = (Wire.read() << 8) | Wire.read();
-        int16_t z = (Wire.read() << 8) | Wire.read();
-        int16_t y = (Wire.read() << 8) | Wire.read();
-
-        // Apply the 1.3 Ga scale factor (0.92 mG/LSb)
-        float normX = x * 0.92;
-        float normY = y * 0.92;
-
-        // Calculate heading
-        float heading = atan2(normY, normX);
-
-        // Apply Magnetic Declination (Kuala Lumpur = -0.0038 rad)
-        float declinationAngle = -0.0038; 
-        heading += declinationAngle;
-
-        // Correct for reversed signs
-        if (heading < 0) {
-            heading += 2 * PI;
+        // Terapkan pembetulan Hard Iron dan Soft Iron
+        float calX = (x - offsetX) * scaleX;
+        float calY = (y - offsetY) * scaleY;
+        
+        // --- PENAPIS (LOW-PASS FILTER) ---
+        // Guna calX dan calY, bukan x dan y yang mentah
+        if (_filteredX == 0.0 && _filteredY == 0.0) {
+            _filteredX = calX;
+            _filteredY = calY;
+        } else {
+            _filteredX = (_alpha * calX) + ((1.0 - _alpha) * _filteredX);
+            _filteredY = (_alpha * calY) + ((1.0 - _alpha) * _filteredY);
         }
-        // Correct for addition of declination
-        if (heading > 2 * PI) {
-            heading -= 2 * PI;
+        
+        // Kira sudut 
+        float headingRadian = atan2(_filteredY, _filteredX);
+        float headingDarjah = headingRadian * (180.0 / PI);
+        
+        if (headingDarjah < 0) {
+            headingDarjah += 360.0;
         }
-
-        return heading * 180.0 / PI; // Return in degrees
+        
+        _lastHeading = headingDarjah;
+        return headingDarjah;
     }
-
-    return 0.0; // Fallback if I2C fails
+    
+    return _lastHeading; 
 }
 
-void DeadReckoning::move(float targetHeading, long targetTicks) {
-    _robot->resetEncoders(); 
-    long currentTicks = 0;
+void DeadReckoning::startMove(float targetHeading, long targetTicks) {
+    _targetHeading = targetHeading;
+    _targetTicks = targetTicks;
     
-    // Tuning Parameters
-    float Kp = 0.003;
-    float Ki = 0.0;
-    float Kd = 0.0;
-    float baseSpeed = 0.15; // Speed in m/s
+    _robot->resetEncoders(); 
+    
+    _previousError = 0.0;
+    _integral = 0.0;
+    _lastCompassRead = millis();
+    
+    _isMoving = true;
+}
 
-    float previousError = 0.0;
-    float integral = 0.0;
-    float error = 0.0;      
-    float correction = 0.0; 
+void DeadReckoning::update() {
+    if (!_isMoving) return;
 
-    // Timer variables for the compass
-    unsigned long lastCompassRead = 0;
-    const unsigned long compassInterval = 70; // 70ms interval for 15Hz
+    long currentTicks = (_robot->getLeftPosition() + _robot->getRightPosition()) / 2.0;
 
-    while (currentTicks < targetTicks) {
-        // Only read the compass and calculate PID if 70ms have passed
-        if (millis() - lastCompassRead >= compassInterval) {
-            lastCompassRead = millis(); // Reset timer
-
-            float currentHeading = getHeading();
-
-            // Calculate heading error
-            error = targetHeading - currentHeading;
-
-            // Normalize the error to the shortest path (-180 to +180 degrees)
-            while (error > 180.0) error -= 360.0;
-            while (error < -180.0) error += 360.0;
-
-            // Calculate PID terms
-            integral += error;
-            float derivative = error - previousError;
-            
-            // Calculate total correction
-            correction = (Kp * error) + (Ki * integral) + (Kd * derivative);
-            previousError = error;
-        }
-
-        // Apply correction to base speeds
-        float leftSpeed = baseSpeed + correction;
-        float rightSpeed = baseSpeed - correction;
-
-        // Command the motors in m/s
-        _robot->drive(leftSpeed, rightSpeed);
-
-        // Update loop variables
-        long averageTick = (_robot->getLeftPosition() + _robot->getRightPosition()) / 2.0;
-        currentTicks = averageTick;
-        
-        // Small delay to prevent the loop from hard-locking the CPU
-        delay(5); 
+    if (currentTicks >= _targetTicks) {
+        _robot->stop();
+        _isMoving = false;
+        return;
     }
 
-    // Target distance reached
-    _robot->stop();
+    if (millis() - _lastCompassRead >= _compassInterval) {
+        _lastCompassRead = millis(); 
+
+        float currentHeading = getHeading();
+        float error = _targetHeading - currentHeading;
+
+        if (error > 180.0) error -= 360.0;
+        if (error < -180.0) error += 360.0;
+
+        _integral += error;
+        float derivative = error - _previousError;
+        
+        float correction = (_Kp * error) + (_Ki * _integral) + (_Kd * derivative);
+        _previousError = error;
+
+        float leftSpeed = _baseSpeed - correction;
+        float rightSpeed = _baseSpeed + correction;
+
+        _robot->drive(leftSpeed, rightSpeed);
+    }
+}
+
+bool DeadReckoning::isMoving() {
+    return _isMoving;
 }
