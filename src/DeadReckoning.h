@@ -3,32 +3,43 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <Adafruit_QMC5883P.h> 
 #include "TwoWDController.h" 
-
-// HMC5883L I2C Address and Registers
-//#define HMC5883L_ADDRESS 0x1E
-#define HMC5883L_ADDRESS 0x2C
-#define HMC5883L_REG_CONFIG_A 0x00
-#define HMC5883L_REG_CONFIG_B 0x01
-#define HMC5883L_REG_MODE 0x02
-#define HMC5883L_REG_DATA 0x03
 
 class DeadReckoning {
   public:
-    // Constructor requiring only the robot controller
-    DeadReckoning(TwoWDController* robot);
+    DeadReckoning(TwoWDController* robot, uint8_t compassAddress);
 
-    // I2C and magnetometer initialization
     void initCompass();
-    
-    // Main navigation method
-    void move(float targetHeading, long targetTicks);
-
-    // Public method to read the compass for debugging or telemetry
     float getHeading(); 
+    
+    void startMove(float targetHeading, long targetTicks);
+    void update(); 
+    bool isMoving();
 
   private:
     TwoWDController* _robot;
+    uint8_t _compassAddress;
+    
+    Adafruit_QMC5883P _compass; 
+
+    bool _isMoving;
+    float _targetHeading;
+    long _targetTicks;
+
+    float _Kp, _Ki, _Kd;
+    float _baseSpeed;
+    float _previousError;
+    float _integral;
+
+    unsigned long _lastCompassRead;
+    const unsigned long _compassInterval = 70;
+
+    // --- VARIABEL BARU UNTUK LOW-PASS FILTER (EMA) ---
+    float _filteredX;
+    float _filteredY;
+    float _alpha;
+    float _lastHeading; // Menyimpan heading terakhir jika pembacaan I2C gagal
 };
 
 #endif
