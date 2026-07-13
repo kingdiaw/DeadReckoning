@@ -11,7 +11,7 @@ By combining distance tracking (via encoder ticks) with dynamic heading correcti
 
 ## Hardware Requirements
 1. **2WD Robot Chassis** with DC motors and wheel encoders.
-2. **HMC5883L Magnetometer** (GY-273 / GY-85 or similar breakout board).
+2. **QMC5883P Magnetometer** (GY-273 / GY-85 or similar breakout board).
 3. **Motor Driver** compatible with your existing `TwoWDController` library.
 
 ### Magnetometer Wiring (I2C)
@@ -30,50 +30,60 @@ By combining distance tracking (via encoder ticks) with dynamic heading correcti
 3. Go to **Sketch > Include Library > Add .ZIP Library...** and select the downloaded file.
 4. Make sure your custom `TwoWDController` library is also installed.
 
-## Setup: Magnetic Declination (Mandatory)
-The compass measures *Magnetic North*, but navigation usually relies on *True North*. The difference between these two is called **Magnetic Declination**, and it changes depending on your geographical location.
-
-To ensure your robot drives accurately, you must update the declination angle in the library:
-1. Visit [Magnetic-Declination.com](http://www.magnetic-declination.com/).
-2. Find your city (e.g., Kuala Lumpur).
-3. Convert the given angle to decimal degrees, and then to radians.
-   * *Example: -0° 13' -> -0.216 degrees -> **-0.0038 rad***
-4. Open `src/DeadReckoning.cpp` and update this line in the `getHeading()` method:
-   ```cpp
-   float declinationAngle = -0.0038; // Update this for your location!
-
+## Kaedah Umum (Public Methods)
+### 1. void initCompass()
+Memulakan sambungan I2C dengan sensor kompas dan menetapkan konfigurasi optimum (Continuous Mode, 50Hz ODR, 8 OSR).
+* Penggunaan: Mesti dipanggil sekali di dalam fungsi setup().
+* Contoh:
 ```
-
-## Quick Start Example
-
-```cpp
-#include <Wire.h>
-#include <TwoWDController.h>
-#include <DeadReckoning.h>
-
-// Initialize your robot controller with your specific hardware pins
-TwoWDController robot(0x20, 4, 2, P2, P3, P0, P1, 18, 19, 25, 13);
-DeadReckoning navigator(&robot);
-
-void setup() {
-  Serial.begin(115200);
-  
-  // Initialize the I2C bus and the HMC5883L
-  navigator.initCompass();
-  delay(500); // Give the compass time to stabilize
-}
-
+nav.initCompass();
+```
+### 2. float getHeading()
+Membaca dan memproses data dari kompas magnetik. Ia menggunakan penentukuran Hard-Iron dan Soft-Iron, serta menapis hingar (noise) menggunakan Penapis Rendah (Low-Pass Filter - EMA).
+* Pulangan (Returns): Nilai float yang mewakili sudut heading semasa dalam unit darjah (0.0° hingga 359.9°).
+* Contoh:
+```
+float arahSemasa = nav.getHeading();
+Serial.println(arahSemasa);
+```
+### 3. void startMove(float targetHeading, long targetTicks)
+Memberi arahan kepada robot untuk mula bergerak dalam garis lurus mengikut sudut sasaran sehingga mencapai jarak yang ditetapkan. Ia juga akan menetapkan semula (reset) nilai enkoder motor dan pembolehubah kawalan PID.
+* Parameter:
+    * targetHeading (float): Sudut arah yang ingin dituju (0 - 360 darjah).
+    * targetTicks (long): Jarak sasaran yang diukur berdasarkan jumlah pergerakan (ticks) dari enkoder tayar.
+* Contoh:
+```
+// Bergerak ke arah 180 darjah (Selatan) sejauh 3000 ticks
+nav.startMove(180.0, 3000);
+```
+### 4. void update()
+Nadi utama kepada sistem navigasi PID. Ia membaca heading semasa, mengira ralat (perbezaan antara arah semasa dan targetHeading), dan menyelaras kelajuan motor kiri dan kanan (melalui fungsi drive() pada TwoWDController). Ia juga menghentikan robot jika sasaran targetTicks telah dicapai.
+* Penggunaan: **Mesti** dipanggil secara berterusan (tanpa halangan/delay) di dalam fungsi loop().
+* Contoh:
+```
 void loop() {
-  // Move to a heading of 90.0 degrees (East) for 1000 encoder ticks
-  navigator.move(90.0, 1000);
-  
-  while(true) { delay(10); } // Stop forever
+    nav.update();
 }
-
 ```
-
-## Author
-
-**kingdiaw** - [kingdiawehsut@gmail.com](mailto:kingdiawehsut@gmail.com)
-
+### 5. bool isMoving()
+Menyemak status pergerakan robot sama ada ia masih dalam perjalanan ke sasaran atau telah berhenti.
+* Pulangan (Returns):
+    * true: Robot masih bergerak.
+    * false: Robot telah sampai ke sasaran (targetTicks dicapai) dan telah berhenti.
+* Contoh:
 ```
+if (!nav.isMoving()) {
+    Serial.println("Robot berjaya sampai ke destinasi!");
+}
+```
+## Aliran Kerja Standard (Workflow)
+Untuk menggunakan API ini dengan betul, ikut susunan aliran kerja ini:
+1. **Global:** Cipta objek TwoWDController dan DeadReckoning.
+2. **setup():** Panggil Wire.begin() dan nav.initCompass().
+3. **Tentukan Sasaran:** Panggil nav.startMove(arah, jarak) apabila anda mahu robot mula bergerak.
+4. **loop():** Sentiasa panggil nav.update() agar sistem PID dapat memperbetulkan arah tayar secara real-time. Anda boleh memantau status menggunakan
+   ```
+   nav.isMoving().
+   ```
+
+
